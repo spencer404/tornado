@@ -85,7 +85,7 @@ from tornado import gen
 from tornado import httputil
 from tornado import iostream
 from tornado import locale
-from tornado.log import access_log, app_log, gen_log
+from tornado.log import access_log, app_log, gen_log, ajax_log
 from tornado import stack_context
 from tornado import template
 from tornado.escape import utf8, _unicode
@@ -111,7 +111,6 @@ try:
                                 numbers.Integral, datetime.datetime]
 except ImportError:
     pass
-
 
 MIN_SUPPORTED_SIGNED_VALUE_VERSION = 1
 """The oldest signed value version supported by this version of Tornado.
@@ -712,6 +711,23 @@ class RequestHandler(object):
         chunk = utf8(chunk)
         self._write_buffer.append(chunk)
 
+    def ajax(self, code, detail=''):
+        """使用JSON格式返回信息
+        code <  1000, detail仅在日志输出
+        code >= 1000, detail仅在响应包中
+        """
+        if code < 1000:
+            ajax_log.warning('%(code)d %(detail)s' % {
+                'code': code,
+                'detail': detail
+            })
+        else:
+            self.write(tornado.escape.json_encode({
+                'code': code,
+                'detail': detail
+            }))
+        raise Finish
+
     def render(self, template_name, **kwargs):
         """Renders the template with the given arguments as the response."""
         if self._finished:
@@ -753,6 +769,7 @@ class RequestHandler(object):
 
         def is_absolute(path):
             return any(path.startswith(x) for x in ["/", "http:", "https:"])
+
         if js_files:
             # Maintain order of JavaScript files given by modules
             paths = []
@@ -770,7 +787,7 @@ class RequestHandler(object):
             html = html[:sloc] + utf8(js) + b'\n' + html[sloc:]
         if js_embed:
             js = b'<script type="text/javascript">\n//<![CDATA[\n' + \
-                b'\n'.join(js_embed) + b'\n//]]>\n</script>'
+                 b'\n'.join(js_embed) + b'\n//]]>\n</script>'
             sloc = html.rindex(b'</body>')
             html = html[:sloc] + js + b'\n' + html[sloc:]
         if css_files:
@@ -783,13 +800,13 @@ class RequestHandler(object):
                     paths.append(path)
                     unique_paths.add(path)
             css = ''.join('<link href="' + escape.xhtml_escape(p) + '" '
-                          'type="text/css" rel="stylesheet"/>'
+                                                                    'type="text/css" rel="stylesheet"/>'
                           for p in paths)
             hloc = html.index(b'</head>')
             html = html[:hloc] + utf8(css) + b'\n' + html[hloc:]
         if css_embed:
             css = b'<style type="text/css">\n' + b'\n'.join(css_embed) + \
-                b'\n</style>'
+                  b'\n</style>'
             hloc = html.index(b'</head>')
             html = html[:hloc] + css + b'\n' + html[hloc:]
         if html_heads:
@@ -929,8 +946,8 @@ class RequestHandler(object):
         # we have not flushed any content yet.
         if not self._headers_written:
             if (self._status_code == 200 and
-                self.request.method in ("GET", "HEAD") and
-                    "Etag" not in self._headers):
+                        self.request.method in ("GET", "HEAD") and
+                        "Etag" not in self._headers):
                 self.set_etag_header()
                 if self.check_etag_header():
                     self._write_buffer = []
@@ -1304,7 +1321,7 @@ class RequestHandler(object):
         See `check_xsrf_cookie()` above for more information.
         """
         return '<input type="hidden" name="_xsrf" value="' + \
-            escape.xhtml_escape(self.xsrf_token) + '"/>'
+               escape.xhtml_escape(self.xsrf_token) + '"/>'
 
     def static_url(self, path, include_host=None, **kwargs):
         """Returns a static URL for the given relative static file path.
@@ -1555,6 +1572,7 @@ class RequestHandler(object):
                 self._active_modules[name] = module(self)
             rendered = self._active_modules[name].render(*args, **kwargs)
             return rendered
+
         return render
 
     def _ui_method(self, method):
@@ -1638,6 +1656,7 @@ def asynchronous(method):
                     f.result()
                     if not self._finished:
                         self.finish()
+
                 IOLoop.current().add_future(result, future_complete)
                 # Once we have done this, hide the Future from our
                 # caller (i.e. RequestHandler._when_complete), which
@@ -1646,6 +1665,7 @@ def asynchronous(method):
                 # logged twice).
                 return None
             return result
+
     return wrapper
 
 
@@ -1693,6 +1713,7 @@ def removeslash(method):
     decorator. Your request handler mapping should use a regular expression
     like ``r'/foo/*'`` in conjunction with using the decorator.
     """
+
     @functools.wraps(method)
     def wrapper(self, *args, **kwargs):
         if self.request.path.endswith("/"):
@@ -1706,6 +1727,7 @@ def removeslash(method):
             else:
                 raise HTTPError(404)
         return method(self, *args, **kwargs)
+
     return wrapper
 
 
@@ -1716,6 +1738,7 @@ def addslash(method):
     decorator. Your request handler mapping should use a regular expression
     like ``r'/foo/?'`` in conjunction with using the decorator.
     """
+
     @functools.wraps(method)
     def wrapper(self, *args, **kwargs):
         if not self.request.path.endswith("/"):
@@ -1727,6 +1750,7 @@ def addslash(method):
                 return
             raise HTTPError(404)
         return method(self, *args, **kwargs)
+
     return wrapper
 
 
@@ -1784,6 +1808,7 @@ class Application(httputil.HTTPServerConnectionDelegate):
     ``static_handler_class`` setting.
 
     """
+
     def __init__(self, handlers=None, default_host="", transforms=None,
                  **settings):
         if transforms is None:
@@ -2009,8 +2034,8 @@ class _RequestDispatcher(httputil.HTTPMessageDelegate):
         if not handlers:
             self.handler_class = RedirectHandler
             self.handler_kwargs = dict(url="%s://%s/"
-                                       % (self.request.protocol,
-                                          app.default_host))
+                                           % (self.request.protocol,
+                                              app.default_host))
             return
         for spec in handlers:
             match = spec.regex.match(self.request.path)
@@ -2112,6 +2137,7 @@ class HTTPError(Exception):
         determined automatically from ``status_code``, but can be used
         to use a non-standard numeric code.
     """
+
     def __init__(self, status_code=500, log_message=None, *args, **kwargs):
         self.status_code = status_code
         self.log_message = log_message
@@ -2165,6 +2191,7 @@ class MissingArgumentError(HTTPError):
 
     .. versionadded:: 3.1
     """
+
     def __init__(self, arg_name):
         super(MissingArgumentError, self).__init__(
             400, 'Missing argument %s' % arg_name)
@@ -2173,6 +2200,7 @@ class MissingArgumentError(HTTPError):
 
 class ErrorHandler(RequestHandler):
     """Generates an error response with ``status_code`` for all requests."""
+
     def initialize(self, status_code):
         self.set_status(status_code)
 
@@ -2211,6 +2239,7 @@ class RedirectHandler(RequestHandler):
     Use Python's :ref:`format string syntax <formatstrings>` to customize how
     values are substituted.
     """
+
     def initialize(self, url, permanent=True):
         self._url = url
         self._permanent = permanent
@@ -2336,7 +2365,7 @@ class StaticFileHandler(RequestHandler):
                 # content, or when a suffix with length 0 is specified
                 self.set_status(416)  # Range Not Satisfiable
                 self.set_header("Content-Type", "text/plain")
-                self.set_header("Content-Range", "bytes */%s" % (size, ))
+                self.set_header("Content-Range", "bytes */%s" % (size,))
                 return
             if start is not None and start < 0:
                 start += size
@@ -2390,7 +2419,7 @@ class StaticFileHandler(RequestHandler):
         version_hash = self._get_cached_version(self.absolute_path)
         if not version_hash:
             return None
-        return '"%s"' % (version_hash, )
+        return '"%s"' % (version_hash,)
 
     def set_headers(self):
         """Sets the content and caching headers on the response.
@@ -2491,7 +2520,7 @@ class StaticFileHandler(RequestHandler):
             raise HTTPError(403, "%s is not in root static directory",
                             self.path)
         if (os.path.isdir(absolute_path) and
-                self.default_filename is not None):
+                    self.default_filename is not None):
             # need to look at the request.path here for when path is empty
             # but there is some prefix to the path that was already
             # trimmed by the routing
@@ -2721,6 +2750,7 @@ class FallbackHandler(RequestHandler):
             (r".*", FallbackHandler, dict(fallback=wsgi_app),
         ])
     """
+
     def initialize(self, fallback):
         self.fallback = fallback
 
@@ -2736,6 +2766,7 @@ class OutputTransform(object):
     or interact with them directly; the framework chooses which transforms
     (if any) to apply.
     """
+
     def __init__(self, request):
         pass
 
@@ -2790,8 +2821,8 @@ class GZipContentEncoding(OutputTransform):
         if self._gzipping:
             ctype = _unicode(headers.get("Content-Type", "")).split(";")[0]
             self._gzipping = self._compressible_type(ctype) and \
-                (not finishing or len(chunk) >= self.MIN_LENGTH) and \
-                ("Content-Encoding" not in headers)
+                             (not finishing or len(chunk) >= self.MIN_LENGTH) and \
+                             ("Content-Encoding" not in headers)
         if self._gzipping:
             headers["Content-Encoding"] = "gzip"
             self._gzip_value = BytesIO()
@@ -2833,6 +2864,7 @@ def authenticated(method):
     will add a `next` parameter so the login page knows where to send
     you once you're logged in.
     """
+
     @functools.wraps(method)
     def wrapper(self, *args, **kwargs):
         if not self.current_user:
@@ -2849,6 +2881,7 @@ def authenticated(method):
                 return
             raise HTTPError(403)
         return method(self, *args, **kwargs)
+
     return wrapper
 
 
@@ -2861,6 +2894,7 @@ class UIModule(object):
 
     Subclasses of UIModule must override the `render` method.
     """
+
     def __init__(self, handler):
         self.handler = handler
         self.request = handler.request
@@ -2943,6 +2977,7 @@ class TemplateModule(UIModule):
     per instantiation of the template, so they must not depend on
     any arguments to the template.
     """
+
     def __init__(self, handler):
         super(TemplateModule, self).__init__(handler)
         # keep resources in both a list and a dict to preserve order
@@ -2959,6 +2994,7 @@ class TemplateModule(UIModule):
                     raise ValueError("set_resources called with different "
                                      "resources for the same template")
             return ""
+
         return self.render_string(path, set_resources=set_resources,
                                   **kwargs)
 
@@ -2998,6 +3034,7 @@ class TemplateModule(UIModule):
 
 class _UIModuleNamespace(object):
     """Lazy namespace which creates UIModule proxies bound to a handler."""
+
     def __init__(self, handler, ui_modules):
         self.handler = handler
         self.ui_modules = ui_modules
@@ -3014,6 +3051,7 @@ class _UIModuleNamespace(object):
 
 class URLSpec(object):
     """Specifies mappings between URLs and handlers."""
+
     def __init__(self, pattern, handler, kwargs=None, name=None):
         """Parameters:
 
@@ -3051,8 +3089,8 @@ class URLSpec(object):
 
     def __repr__(self):
         return '%s(%r, %s, kwargs=%r, name=%r)' % \
-            (self.__class__.__name__, self.regex.pattern,
-             self.handler_class, self.kwargs, self.name)
+               (self.__class__.__name__, self.regex.pattern,
+                self.handler_class, self.kwargs, self.name)
 
     def _find_groups(self):
         """Returns a tuple (reverse string, group count) for a url.
@@ -3091,8 +3129,8 @@ class URLSpec(object):
     def reverse(self, *args):
         if self._path is None:
             raise ValueError("Cannot reverse url regex " + self.regex.pattern)
-        assert len(args) == self._group_count, "required number of arguments "\
-            "not found"
+        assert len(args) == self._group_count, "required number of arguments " \
+                                               "not found"
         if not len(args):
             return self._path
         converted_args = []
@@ -3102,8 +3140,8 @@ class URLSpec(object):
             converted_args.append(escape.url_escape(utf8(a), plus=False))
         return self._path % tuple(converted_args)
 
-url = URLSpec
 
+url = URLSpec
 
 if hasattr(hmac, 'compare_digest'):  # python 3.3
     _time_independent_equals = hmac.compare_digest
@@ -3151,6 +3189,7 @@ def create_signed_value(secret, name, value, version=None, clock=None,
         # - signature (hex-encoded; no length prefix)
         def format_field(s):
             return utf8("%d:" % len(s)) + utf8(s)
+
         to_sign = b"|".join([
             b"2",
             format_field(str(key_version or 0)),
@@ -3168,6 +3207,7 @@ def create_signed_value(secret, name, value, version=None, clock=None,
         return to_sign + signature
     else:
         raise ValueError("Unsupported version %d" % version)
+
 
 # A leading version number in decimal
 # with no leading zeros, followed by a pipe.

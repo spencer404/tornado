@@ -46,6 +46,7 @@ except ImportError:
 access_log = logging.getLogger("tornado.access")
 app_log = logging.getLogger("tornado.application")
 gen_log = logging.getLogger("tornado.general")
+ajax_log = logging.getLogger("tornado.ajax")
 
 
 def _stderr_supports_color():
